@@ -293,9 +293,19 @@ ALLOWED_TOPICS = [
     "tai khoan", "giao dich", "tiet kiem", "lai suat",
     "chuyen tien", "the tin dung", "so du", "vay",
     "ngan hang", "atm",
+    # topic_filter matches by word prefix, so avoid short stems ("pin" → "pineapple")
+    "bank", "vinbank", "card", "pin code", "statement", "otp", "fees", "exchange rate",
+    "mortgage", "overdraft", "the ngan hang", "mat the", "khoa the",
+    "bieu phi", "phi chuyen",
 ]
 
 BLOCKED_TOPICS = [
     "hack", "exploit", "weapon", "drug", "illegal",
     "violence", "gambling", "bomb", "kill", "steal",
+    # harmful banking-adjacent requests (still "on topic" by keyword)
+    # (plain "phishing" is NOT blocked: customers report phishing SMS to the bank)
+    "bypass", "launder", "money laundering", "phishing kit", "phishing page",
+    "phishing site", "malware", "ransomware",
+    "someone else's account", "someone elses account", "other people's account",
+    "rua tien", "danh cap", "chiem doat", "tai khoan cua nguoi khac",
 ]

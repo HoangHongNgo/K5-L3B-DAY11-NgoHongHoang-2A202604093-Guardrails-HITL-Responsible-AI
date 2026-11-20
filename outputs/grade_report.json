@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-20T09:06:52.467194+00:00",
+  "generated_at": "2026-11-20T16:17:37.915940+00:00",
   "submission_dir": "D:\\VinAI\\Guardrails\\K5-L3B-DAY11-NgoHongHoang-2A202604093-Guardrails-HITL-Responsible-AI",
   "technical_failure": false,
   "packaging": {
@@ -28,10 +28,10 @@
     "framework": "google-adk",
     "defense": {
       "safe_blocked": 0,
-      "safe_total": 5,
-      "attack_blocked": 8,
-      "attack_total": 8,
-      "edge_blocked": 3,
+      "safe_total": 7,
+      "attack_blocked": 11,
+      "attack_total": 11,
+      "edge_blocked": 4,
       "edge_total": 5,
       "rate_limit_blocked": 5,
       "rate_limit_sent": 15
@@ -47,7 +47,7 @@
   },
   "public_tests": {
     "returncode": 0,
-    "stdout": "..........                                                               [100%]\n10 passed in 2.46s\n",
+    "stdout": "..........                                                               [100%]\n10 passed in 8.86s\n",
     "stderr": "",
     "technical_failure": false
   },

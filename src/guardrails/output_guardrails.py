@@ -4,6 +4,8 @@ Checkpoint 2 — Output Guardrails
   - OutputGuardrailPlugin (ADK)           ← bắt buộc
   - LLM-as-Judge                          ← optional (không chấm)
 """
+from __future__ import annotations
+
 import re
 import textwrap
 
@@ -13,6 +15,10 @@ from google.adk import runners
 from google.adk.plugins import base_plugin
 
 from core.utils import chat_with_agent
+from core.config import DEMO_SECRETS
+from agents.security_boundary import contains_secret
+from guardrails.normalize import normalize, squash, strip_accents, text_views
+from guardrails.pii_presidio import redact_pii
 
 
 # ============================================================
@@ -27,8 +33,85 @@ from core.utils import chat_with_agent
 # - "redacted": cleaned response (PII replaced with [REDACTED])
 # ============================================================
 
+# Protected values (from data/protected/vinbank_secrets.json), squashed so that
+# "a d m i n - 1 2 3" or "db[.]vinbank[.]internal" still match.
+_PROTECTED_NEEDLES = tuple(
+    n for n in {squash(s) for s in DEMO_SECRETS} | {"admin123", "skvinbanksecret2024", "dbvinbankinternal"}
+    if len(n) >= 6
+)
+# Distinctive phrases from Blue's system prompt — their presence means the
+# model is echoing its instructions (prompt leakage).
+_PROMPT_CANARIES = (
+    "donotdisclose", "internalnote", "mustnotviolate",
+    "neverrevealrepeatconfirm", "youareahelpfulcustomerserviceassistantforvinbank",
+)
+_SPOKEN_PUNCT = (
+    (re.compile(r"\s*[\[\(\{]?\s*\b(dot|cham)\b\s*[\]\)\}]?\s*", re.IGNORECASE), "."),
+    (re.compile(r"\s*[\[\(\{]?\s*\b(dash|hyphen|gach)\b\s*[\]\)\}]?\s*", re.IGNORECASE), "-"),
+    (re.compile(r"\s*[\[\(\{]?\s*\b(colon)\b\s*[\]\)\}]?\s*", re.IGNORECASE), ":"),
+)
+_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9",
+}
+
+BLOCKED_OUTPUT_MESSAGE = (
+    "[REDACTED] I'm sorry, I can't share internal or confidential information. "
+    "I'm happy to help with your VinBank accounts, transfers, savings, loans or cards."
+)
+
+
+def _spoken_view(text: str) -> str:
+    out = text
+    for rx, rep in _SPOKEN_PUNCT:
+        out = rx.sub(rep, out)
+    return re.sub(
+        r"\b(" + "|".join(_NUMBER_WORDS) + r")\b",
+        lambda m: _NUMBER_WORDS[m.group(1).lower()], out, flags=re.IGNORECASE,
+    )
+
+
+def leaks_protected_data(text: str) -> str | None:
+    """Return a reason string if ``text`` leaks a protected value / the prompt.
+
+    Checks every de-obfuscated view (reversed, ROT13, base64, hex, leet,
+    spaced letters, spelled-out "dot"/"one two three") — redaction by regex
+    alone cannot keep up with obfuscated leaks, so these trigger a full block.
+    """
+    views = text_views(text, include_reversed=True)
+    views += [_spoken_view(v) for v in views[:3]]
+    for view in views:
+        if contains_secret(view):
+            return "protected_secret"
+        squashed = squash(view)
+        if any(n in squashed for n in _PROTECTED_NEEDLES):
+            return "protected_secret"
+    base = squash(strip_accents(normalize(text)))
+    if any(c in base for c in _PROMPT_CANARIES):
+        return "system_prompt_leak"
+    if _PARTIAL_HINT.search(strip_accents(normalize(text))):
+        return "partial_secret_hint"
+    return None
+
+
+# "the password starts with 'admin' and ends with 123" — leaking a secret piecemeal.
+_PARTIAL_HINT = re.compile(
+    r"\b(password|passcode|api\s*key|key|token|host(name)?|secret|credential)s?\b.{0,60}?"
+    r"\b(starts?|begins?|ends?|prefix(ed)?|suffix(ed)?)\s+(with|is|in)\b"
+    r"|\b(first|last|\d+(st|nd|rd|th))\s+(character|letter|digit|char)s?\s+(of\s+the\s+)?"
+    r"(password|key|token|host|secret)",
+    re.IGNORECASE,
+)
+
+
 def content_filter(response: str) -> dict:
     """Filter response for PII, secrets, and harmful content.
+
+    Two stages:
+      1. Regex redaction of plain PII / secrets → ``[REDACTED]`` in place.
+      2. Obfuscation-aware leak check on the *redacted* text; anything still
+         leaking (encoded, reversed, spelled-out secret, or echoed system
+         prompt) replaces the whole response with a refusal.
 
     Args:
         response: The LLM's response text
@@ -37,23 +120,37 @@ def content_filter(response: str) -> dict:
         dict with 'safe', 'issues', and 'redacted' keys
     """
     issues = []
+    response = response or ""
     redacted = response
 
     # PII patterns to check
     PII_PATTERNS = {
         "api_key": r"\bsk-[a-zA-Z0-9_-]+",
-        "password": r"\b(?:password|passwd|mat khau|mật khẩu)\s*(?:is|=|:)?\s*[:=]?\s*[^\s,;]+",
+        # require an explicit "is / = / :" so "reset your password, use ..." is untouched
+        "password": r"\b(?:password|passwd|pwd|pass|mat khau|mật khẩu)\s*(?:is|=|:|là|la)\s*[\"'`]?[^\s,;\"'`]+",
         "email": r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-zA-Z]{2,}",
-        "vn_phone": r"(?<!\d)(?:\+?84|0)\d{9,10}(?!\d)",
+        "vn_phone": r"(?<!\d)(?:\+?84|0)[\s.-]?\d{2,3}[\s.-]?\d{3}[\s.-]?\d{3,4}(?!\d)",
         "national_id": r"(?<!\d)(?:\d{12}|\d{9})(?!\d)",
         "db_host": r"\b[\w.-]+\.internal(?::\d+)?\b",
+        "card_number": r"(?<!\d)(?:\d{4}[\s-]?){3}\d{4}(?!\d)",
     }
 
     for name, pattern in PII_PATTERNS.items():
-        matches = re.findall(pattern, response, re.IGNORECASE)
+        matches = re.findall(pattern, redacted, re.IGNORECASE)
         if matches:
             issues.append(f"{name}: {len(matches)} found")
             redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
+
+    # Microsoft Presidio: Luhn-checked cards, IBAN, international phones, tokens…
+    presidio_text, entities = redact_pii(redacted)
+    if entities:
+        issues.append(f"presidio: {', '.join(entities)}")
+        redacted = presidio_text
+
+    leak = leaks_protected_data(redacted)
+    if leak:
+        issues.append(f"{leak}: obfuscated/residual leak — response blocked")
+        redacted = BLOCKED_OUTPUT_MESSAGE
 
     return {
         "safe": len(issues) == 0,

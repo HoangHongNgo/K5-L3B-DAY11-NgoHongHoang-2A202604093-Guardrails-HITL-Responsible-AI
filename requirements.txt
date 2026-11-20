@@ -5,3 +5,9 @@ python-dotenv>=1.0.0
 pytest>=8.0.0
 jsonschema>=4.0.0
 nemoguardrails>=0.24.1,<0.25  # bắt buộc cho Red Advance (NeMo Guardrails)
+# --- Blue multilingual defense (open-source) ---
+fastembed>=0.9,<1.0                  # ONNX multilingual embeddings (semantic attack/topic layer)
+lingua-language-detector>=2.2,<3.0   # language identification
+presidio-analyzer>=2.2,<3.0          # Microsoft Presidio PII detection
+phonenumbers>=9.0                    # international phone numbers (Presidio)
+# spaCy model for Presidio: python -m spacy download en_core_web_sm
