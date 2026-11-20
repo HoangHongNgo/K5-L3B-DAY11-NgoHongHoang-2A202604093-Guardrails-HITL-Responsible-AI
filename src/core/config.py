@@ -35,8 +35,10 @@ PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENROUTER = "openrouter"
 
 # --- Blue Team (LOCKED) ---
-BLUE_PROVIDER = PROVIDER_OPENROUTER
-BLUE_MODEL = "liquid/lfm-3-1.7b:free"
+PROVIDER_LIQUID = "liquid"
+BLUE_PROVIDER = PROVIDER_LIQUID
+BLUE_MODEL = "lfm3-1.7b"  # same LFM3 1.7B model, served directly by Liquid AI
+LIQUID_BASE_URL = "https://api.liquid.ai/openai/v1"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_MODEL = BLUE_MODEL  # alias
 
@@ -112,13 +114,17 @@ def get_openrouter_api_key() -> str:
     return os.environ.get("OPENROUTER_API_KEY", "").strip()
 
 
+def get_liquid_api_key() -> str:
+    return os.environ.get("LIQUID_API_KEY", "").strip()
+
+
 def blue_client_kwargs() -> dict:
-    """OpenAI SDK kwargs pointing at OpenRouter (Blue Team only)."""
+    """OpenAI SDK kwargs pointing at Liquid AI (Blue Team only)."""
     return {
-        "api_key": get_openrouter_api_key() or None,
+        "api_key": get_liquid_api_key() or None,
         "base_url": (
-            os.environ.get("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL).strip()
-            or OPENROUTER_BASE_URL
+            os.environ.get("LIQUID_BASE_URL", LIQUID_BASE_URL).strip()
+            or LIQUID_BASE_URL
         ),
     }
 
@@ -142,8 +148,19 @@ def get_red_provider() -> str:
     return PROVIDER_OPENAI
 
 
+def red_uses_openrouter() -> bool:
+    """RED_TEAM_PROVIDER=openrouter: Red gọi gpt-4o-mini qua OpenRouter (OpenAI SDK)."""
+    raw = (os.environ.get("RED_TEAM_PROVIDER") or "").strip().lower()
+    return raw == PROVIDER_OPENROUTER
+
+
 def get_red_model() -> str:
     """Model Red Team từ .env (cùng cho default + advance)."""
+    if red_uses_openrouter():
+        return (
+            os.environ.get("OPENROUTER_RED_MODEL", "openai/" + DEFAULT_OPENAI_MODEL).strip()
+            or "openai/" + DEFAULT_OPENAI_MODEL
+        )
     if get_red_provider() == PROVIDER_GEMINI:
         return (
             os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip()
@@ -166,11 +183,16 @@ def get_red_model_advance() -> str:
 
 
 def get_openai_api_key() -> str:
+    if red_uses_openrouter():
+        return get_openrouter_api_key()
     return os.environ.get("OPENAI_API_KEY", "").strip()
 
 
 def red_openai_client_kwargs() -> dict:
-    return {"api_key": get_openai_api_key() or None}
+    kwargs = {"api_key": get_openai_api_key() or None}
+    if red_uses_openrouter():
+        kwargs["base_url"] = OPENROUTER_BASE_URL
+    return kwargs
 
 
 def red_provider_label(tier: str = "advance") -> str:
@@ -236,9 +258,9 @@ def is_harder_model() -> bool:
 
 def setup_api_key():
     """Ensure keys for Blue (OpenRouter) + Red / Red Advance (OpenAI or Gemini)."""
-    if not get_openrouter_api_key():
-        os.environ["OPENROUTER_API_KEY"] = input(
-            "Enter OpenRouter API Key (Blue): "
+    if not get_liquid_api_key():
+        os.environ["LIQUID_API_KEY"] = input(
+            "Enter Liquid AI API Key (Blue): "
         ).strip()
     print(f"Blue  — {blue_provider_label()}  [LOCKED]")
 
